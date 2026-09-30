@@ -1,0 +1,6 @@
+services:
+  - {name: api-gateway, port: 8000, kind: service,  description: "Public entry point",   depends_on: [orders]}
+  - {name: orders,      port: 8001, kind: service,  description: "Order management",     depends_on: [payments]}
+  - {name: payments,    port: 8002, kind: service,  description: "Payment processing",   depends_on: [inventory]}
+  - {name: inventory,   port: 8003, kind: service,  description: "Stock reservation",    depends_on: []}
+  - {name: loadgen,     port: 8010, kind: external, description: "Traffic generator",    depends_on: [api-gateway]}
