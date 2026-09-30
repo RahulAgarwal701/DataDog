@@ -1,0 +1,34 @@
+# Demo-only override. Always used together with docker-compose.yml:
+#     docker compose -f docker-compose.yml -f docker-compose.override.yml ...
+# (the Makefile in this directory already does that for every target)
+#
+# WHY THIS EXISTS
+#   The contract (section 6) sanctions `error: "ECONNREFUSED"` on CONNECT_FAILED
+#   events, and the Phase 1 demo script promises "ERROR logs: connection refused".
+#   The obvious way to get that -- `docker compose stop payments` -- does NOT
+#   produce it: stopping a container removes its Docker DNS record, so the client
+#   fails in getaddrinfo ("Name or service not known") and never issues a
+#   connect(). There is no TCP packet to observe, so a real eBPF agent would see
+#   nothing at all on orders->payments.
+#
+#   What we actually want to demo is a service that is still present and
+#   resolvable but whose port has gone away -- the classic crashed-listener case.
+#   So payments is started under a one-line supervisor that keeps the container
+#   (and its DNS entry and IP) alive independently of the server process.
+#   `make fault-refuse` then kills only the server process, which closes the
+#   listening socket: the kernel answers with a real TCP RST, the client reports
+#   ECONNREFUSED, and the connection failure is genuinely visible at kernel level.
+#
+#   Side benefit for the demo: the container stays up and simply goes
+#   "unhealthy", so the Overview tab shows payments as degraded rather than
+#   disappearing from the list.
+#
+# To go back to plain container-stop behaviour:  make fault-refuse-stop
+services:
+  payments:
+    volumes:
+      - ./payments_supervisor.sh:/supervisor.sh:ro
+    command:
+      - sh
+      - /supervisor.sh
+      - serve

@@ -1,0 +1,168 @@
+# Mini Datadog - Phase 1 demo stack (integration glue; owners keep their own folders).
+#
+#   make -C demo demo      # build + start everything, wait until healthy
+#   make -C demo smoke     # validate every Platform API response against the contracts
+#
+# All build contexts are the REPO ROOT, so each owner keeps their folder where it is.
+name: minidd
+
+x-svc-build: &svc-build
+  context: ..
+  dockerfile: mini-datadog-dev-phase1/mini-datadog/services/Dockerfile
+
+x-svc-env: &svc-env
+  LOG_DIR: /logs
+  HTTP_KEEPALIVE: "false"          # contract 7.1: no keep-alive, so eBPF sees every connection
+  ORDERS_URL: http://orders:8001
+  PAYMENTS_URL: http://payments:8002
+  INVENTORY_URL: http://inventory:8003
+  GATEWAY_URL: http://api-gateway:8000
+  PYTHONUNBUFFERED: "1"
+
+x-svc: &svc
+  build: *svc-build
+  restart: unless-stopped
+  volumes: ["logs:/logs"]
+  healthcheck: &svc-health
+    test: ["CMD-SHELL", "python -c \"import os,urllib.request as u; u.urlopen('http://localhost:'+os.environ['PORT']+'/health', timeout=2)\""]
+    interval: 5s
+    timeout: 3s
+    retries: 20
+    start_period: 5s
+
+x-py-health: &py-health
+  interval: 5s
+  timeout: 3s
+  retries: 30
+  start_period: 5s
+
+services:
+  # ---------- Dev: the monitored microservices ----------
+  api-gateway:
+    <<: *svc
+    ports: ["8000:8000"]
+    environment: {<<: *svc-env, MODULE: api_gateway, SERVICE_NAME: api-gateway, PORT: "8000"}
+  orders:
+    <<: *svc
+    ports: ["8001:8001"]
+    environment: {<<: *svc-env, MODULE: orders, SERVICE_NAME: orders, PORT: "8001"}
+  payments:
+    <<: *svc
+    ports: ["8002:8002"]
+    environment: {<<: *svc-env, MODULE: payments, SERVICE_NAME: payments, PORT: "8002"}
+  inventory:
+    <<: *svc
+    ports: ["8003:8003"]
+    environment: {<<: *svc-env, MODULE: inventory, SERVICE_NAME: inventory, PORT: "8003"}
+  loadgen:
+    <<: *svc
+    ports: ["8010:8010"]
+    depends_on: [api-gateway]
+    environment: {<<: *svc-env, MODULE: loadgen, SERVICE_NAME: loadgen, PORT: "8010", AUTOSTART: "true"}
+
+  # ---------- Rahul: Prometheus + Metrics API ----------
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=6h
+      - --web.enable-lifecycle
+    volumes:
+      - ../rahul-metrics-phase1/metrics/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports: ["9090:9090"]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9090/-/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  metrics-api:
+    build: {context: .., dockerfile: rahul-metrics-phase1/metrics/metrics_api/Dockerfile}
+    restart: unless-stopped
+    ports: ["9001:9001"]
+    environment: {PORT: "9001", LOG_LEVEL: INFO, PROMETHEUS_URL: "http://prometheus:9090", MOCK: "false"}
+    depends_on:
+      prometheus: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:9001/health', timeout=2)"]
+      <<: *py-health
+
+  # ---------- Diya: Elasticsearch + log shipper + Logs API ----------
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.4
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: -Xms512m -Xmx512m
+    ulimits: {memlock: {soft: -1, hard: -1}}
+    ports: ["9200:9200"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf localhost:9200/_cluster/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 20s
+
+  log-shipper:
+    build: {context: .., dockerfile: logs/Dockerfile}
+    command: python -m logs.shipper.shipper
+    restart: unless-stopped
+    environment: {ES_URL: "http://elasticsearch:9200", LOG_DIR: /logs, POLL_SECONDS: "1"}
+    volumes: ["logs:/logs:ro"]
+    depends_on:
+      elasticsearch: {condition: service_healthy}
+
+  logs-api:
+    build: {context: .., dockerfile: logs/Dockerfile}
+    restart: unless-stopped
+    ports: ["9002:9002"]
+    environment: {PORT: "9002", ES_URL: "http://elasticsearch:9200", MOCK: "false"}
+    depends_on:
+      elasticsearch: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:9002/health', timeout=2)"]
+      <<: *py-health
+
+  # ---------- Brajesh: Topology API (ingests NetworkEvents) ----------
+  topology-api:
+    build: {context: .., dockerfile: linux/topology/Dockerfile}
+    restart: unless-stopped
+    ports: ["9003:9003"]
+    environment: {PORT: "9003", MOCK: "false", MAX_EVENTS: "200000"}
+
+  # Network-event source. Stands in for the eBPF agent, which needs CAP_BPF/root.
+  # `make netmon-off` stops it before you run the real agent (linux/ebpf) instead.
+  netmon-sim:
+    build: {context: .., dockerfile: demo/netmon.Dockerfile}
+    restart: unless-stopped
+    environment:
+      TOPOLOGY_URL: http://topology-api:9003
+      METRICS_URL: http://metrics-api:9001
+      REGISTRY_PATH: /app/contracts/registry.yaml
+      SERVICE_URL_FMT: "http://{name}:{port}"
+    depends_on: [topology-api]
+
+  # ---------- Darsan: Platform API (single entry point) + dashboard ----------
+  platform-api:
+    build: {context: .., dockerfile: darsan/platform_api/Dockerfile}
+    restart: unless-stopped
+    ports: ["9000:9000"]
+    environment:
+      PORT: "9000"
+      REGISTRY_PATH: /app/contracts/registry.yaml
+      SERVICE_URL_FMT: "http://{name}:{port}"
+      METRICS_URL: http://metrics-api:9001
+      LOGS_URL: http://logs-api:9002
+      TOPOLOGY_URL: http://topology-api:9003
+    depends_on: [metrics-api, logs-api, topology-api]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:9000/health', timeout=2)"]
+      <<: *py-health
+
+  dashboard:
+    build: {context: .., dockerfile: darsan/dashboard/Dockerfile}
+    restart: unless-stopped
+    ports: ["3000:80"]
+
+volumes:
+  logs: {}
