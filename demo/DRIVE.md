@@ -1,5 +1,9 @@
 # Driving the Phase 1 demo
 
+> **Before you present:** read your own Q&A guide in [`docs/members/`](../docs/members/README.md).
+> Those have the "why" behind every step here, the questions a supervisor is likely to ask, and
+> the limitations you should volunteer yourself. This file is the click-path; those are the answers.
+
 One page. Follow it top to bottom. Every step is one command, what you say, and what
 must be true before you move on. Nothing here needs judgement from you.
 
@@ -145,6 +149,12 @@ make -C demo fault-refuse
 - **Network** tab: the `orders → payments` edge turns **red**, labelled with a ✗ count
 - **Logs** tab, orders: `ConnectionRefusedError: [Errno 111] Connect call failed`
 
+**Do not type the error string into the Logs search box.** The search only matches the
+`message` field, and this text lives in `fields.error` — searching `ECONNREFUSED` returns
+"no logs match" and looks like the evidence is missing. Filter by service `orders` +
+severity `ERROR` and read the rendered row instead. (Known gap, listed in
+`docs/members/diya.md`.)
+
 **Do not point at the error-rate number here.** It falls rather than rises, because
 Prometheus is on a 30s rolling window that still holds the 500s from step 7. Red edge plus
 the Errno 111 log line is the evidence; the percentage would undercut you.
@@ -172,7 +182,16 @@ Showing the recovery matters as much as showing the break.
 git log --oneline
 ```
 
-> "Contract first, then one commit per module, then the demo glue. Seventeen commits."
+> "The contract was the first commit, then one commit per module, then the demo glue, then the
+> evidence and the driving script."
+
+Do **not** quote a commit count from memory. Count is not a virtue here, and the history grows
+— the argument is the *order*: `02_CONTRACTS.md` and the pydantic models landed before any
+service existed, so nothing could drift from the contract. If they ask how you proved it:
+
+```bash
+git log --oneline --reverse | grep -n . | sed -n '6,8p'   # contract sits at position 3
+```
 
 ---
 
