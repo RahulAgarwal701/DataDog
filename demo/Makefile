@@ -14,7 +14,7 @@ TIMEOUT := 300
 .PHONY: help demo up down restart ps logs smoke faults fault-latency fault-error \
 	fault-refuse fault-refuse-stop fault-restore fault-status load-baseline load-surge load-stop netmon-off \
 	netmon-ebpf ebpf-build ebpf-sample ebpf-agents build clean nuke check
-	netmon-off netmon-on netmon-sim-stop netmon-sim-start
+	netmon-off netmon-on netmon-sim-stop netmon-sim-start walkthrough
 
 help: ## show this help
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk -F':.*?## ' '{printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -23,6 +23,7 @@ help: ## show this help
 demo: ## build + start the whole stack, wait for every container to be healthy
 	$(C) up -d --build --wait --wait-timeout $(TIMEOUT)
 	@$(MAKE) --no-print-directory verify
+	@$(MAKE) --no-print-directory walkthrough
 	@echo
 	@echo "  dashboard    http://localhost:3000"
 	@echo "  platform-api http://localhost:9000/api/v1/health/all"
@@ -54,6 +55,26 @@ verify: ## check that every backend answers on the contract endpoints
 	if [ "$$es" = "200" ]; then echo "  ok   elasticsearch (9200)"; else echo "  FAIL elasticsearch ($$es)"; ok=1; fi; \
 	exit $$ok
 
+# The health endpoints only prove each process is listening. This walks one real
+# request down the whole chain, which is the only check that catches a service
+# that is up but broken -- which is exactly the state a half-restarted payments
+# worker lands in.
+walkthrough: ## send one real request through api-gateway -> orders -> payments -> inventory
+	@body='{"customer_id":"c7","item_id":"item3","quantity":2,"amount":42.5}'; \
+	code=$$(curl -s -o /tmp/minidd-walkthrough.json -w '%{http_code}' \
+	  -X POST http://localhost:8000/orders \
+	  -H 'content-type: application/json' \
+	  -H "X-Request-ID: req_$$(openssl rand -hex 8)" -d "$$body"); \
+	if [ "$$code" = "201" ] && grep -q '"status": *"confirmed"' /tmp/minidd-walkthrough.json; then \
+	  echo "  ok   full chain returned 201 confirmed  ($$(cat /tmp/minidd-walkthrough.json))"; \
+	else \
+	  echo "  FAIL full chain returned $$code: $$(head -c 200 /tmp/minidd-walkthrough.json)"; \
+	  echo "       if payments was recently restarted: docker compose exec payments /supervisor.sh logs"; \
+	  exit 1; \
+	fi
+	@if $(MAKE) --no-print-directory fault-status >/dev/null 2>&1; then :; else \
+	  echo "  FAIL payments listener is down: make -C demo fault-restore"; exit 1; fi
+
 # ---------- the referee ----------
 smoke: ## validate every Platform API response against the pydantic contract models
 	@$(C) exec -T platform-api python scripts/smoke.py
@@ -63,6 +84,7 @@ check: ## contract tests for the Go modules + the demo stack smoke test
 	cd ../linux/ebpf && go test ./internal/raw/... ./internal/resolve/... \
 		./internal/convert/... ./internal/sink/... ./internal/pretty/...
 	$(MAKE) --no-print-directory smoke
+	$(MAKE) --no-print-directory walkthrough
 
 # ---------- faults ----------
 fault-latency: ## inject 800 ms latency into payments for 60 s

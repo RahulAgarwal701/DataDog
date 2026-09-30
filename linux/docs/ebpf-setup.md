@@ -132,10 +132,26 @@ Also screenshot the `--pretty` terminal during `make demo-refuse` (red CONNECT_F
 
 ## 10. Phase 1 acceptance checklist
 
-- [ ] `make test` passes in `topology/` and `ebpf/`
-- [ ] `make run` prints CONNECT events for api-gateway→orders, orders→payments, payments→inventory
-- [ ] `make demo-refuse` produces CONNECT_FAILED / ECONNREFUSED for orders→payments within ~1 s
-- [ ] `GET /api/v1/topology` returns 4 service nodes + loadgen external and the chain edges
-- [ ] `docs/samples/*.sample.*` generated from a real run and committed
-- [ ] Verified on the demo machine (not just your laptop)
-- [ ] Darsan's `make smoke` passes against `:9003`
+Verified on the demo machine against `demo/` (all containers healthy, `make -C demo check` green):
+
+- [x] `make test` passes in `topology/` and `ebpf/` (4 and 5 packages)
+- [x] `make run` prints CONNECT events for api-gateway→orders, orders→payments, payments→inventory
+- [x] `make demo-refuse` produces CONNECT_FAILED / ECONNREFUSED for orders→payments within ~1 s
+- [x] `GET /api/v1/topology` returns 4 service nodes + loadgen external and the chain edges
+- [x] `docs/samples/*.sample.*` generated from a real run and committed
+- [x] Verified on the demo machine (not just your laptop)
+- [x] Darsan's `make smoke` passes against `:9003`
+
+Notes from that run, in case they come up again:
+
+The agent needs root (CAP_BPF plus a raised memlock limit). `pkexec` prompts once
+and is enough; a Python rewrite would hit the same kernel restriction.
+
+`docs/samples/events.sample.jsonl` was captured with a refusal fault injected partway
+through, so it contains real `ECONNREFUSED` events rather than only healthy traffic.
+It validates against the pydantic models with no violations.
+
+Watch for orphaned agents. Killing the `timeout`/`pkexec` wrapper orphans the root
+child instead of stopping it, and an orphan keeps posting events, which shows up as
+inflated edge counts. `make -C demo ebpf-agents` lists them; they need
+`pkexec kill -9`.

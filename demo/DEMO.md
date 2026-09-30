@@ -110,6 +110,8 @@ Prep without the agent: `make -C demo ebpf-build` (needs clang) and see
 | Metrics tab says "upstream_unavailable" | Prometheus needs ~20 s on first boot. `make -C demo ps` |
 | Logs tab empty | The shipper indexes on a 1 s poll. Wait ~10 s, then `make -C demo logs log-shipper` |
 | Payments shows gaps in metrics | That is the connection-refusal fault still active. `make -C demo fault-restore` |
+| Chain returns 502 but every container looks healthy | payments is up but not serving. `docker compose -f demo/docker-compose.yml -f demo/docker-compose.override.yml exec payments /supervisor.sh logs` then `make -C demo fault-restore` |
+| `make -C demo walkthrough` fails | It sends one real request down the whole chain. This is the check to run if a panel looks wrong. |
 | Port already in use | `ss -ltnp \| grep -E '800[0-3]\|8010\|900[0-3]\|3000'` |
 | ES slow / OOM | It is capped at 512 MB heap. Close other apps; `free -h` |
 | Everything wedged after a crash | `make -C demo nuke && make demo` (wipes logs too) |
