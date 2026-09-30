@@ -1,0 +1,15 @@
+.git
+**/.git
+**/node_modules
+**/__pycache__
+**/*.pyc
+**/.venv
+**/bin
+**/out
+**/.pytest_cache
+**/.mypy_cache
+**/*.jsonl
+!logs/samples/*.jsonl
+**/docs/samples/*.jsonl
+*.md
+!*/README.md
