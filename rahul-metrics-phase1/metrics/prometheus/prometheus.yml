@@ -1,0 +1,31 @@
+# Prometheus config for Docker Compose (targets resolved by Compose service-name DNS).
+# Contract: scrape every 5s; the `service` label is attached HERE, never by the services.
+global:
+  scrape_interval: 5s
+  scrape_timeout: 4s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: api-gateway
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["api-gateway:8000"]
+        labels: {service: api-gateway}
+
+  - job_name: orders
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["orders:8001"]
+        labels: {service: orders}
+
+  - job_name: payments
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["payments:8002"]
+        labels: {service: payments}
+
+  - job_name: inventory
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["inventory:8003"]
+        labels: {service: inventory}
