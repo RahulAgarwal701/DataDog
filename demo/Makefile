@@ -79,9 +79,12 @@ walkthrough: ## send one real request through api-gateway -> orders -> payments 
 # ---------- the referee ----------
 preflight: ## everything to check BEFORE you start presenting
 	@echo "== containers =="
-	@n=$$($(C) ps --format '{{.Name}}' 2>/dev/null | wc -l); \
-	if [ "$$n" -lt 14 ]; then echo "  FAIL only $$n/14 containers up -- run: make -C demo demo"; exit 1; fi; \
-	echo "  ok   $$n containers up"
+	@up=$$($(C) ps --format '{{.Name}}' 2>/dev/null); \
+	n=$$(echo "$$up" | grep -cv netmon-sim); \
+	if [ "$$n" -lt 13 ]; then echo "  FAIL only $$n/13 core containers up -- run: make -C demo demo"; exit 1; fi; \
+	if echo "$$up" | grep -q netmon-sim; \
+	  then echo "  ok   $$n core containers up (+ simulator)"; \
+	  else echo "  ok   $$n core containers up (simulator off -- real eBPF agent owns the Network tab)"; fi
 	@$(MAKE) --no-print-directory verify
 	@$(MAKE) --no-print-directory walkthrough
 	@echo "== data flowing =="
@@ -208,4 +211,5 @@ ebpf-sample: ## capture 30 s of REAL kernel events to linux/docs/samples/ (demo 
 	  --out-file $(CURDIR)/../linux/docs/samples/events.sample.jsonl
 
 ebpf-agents: ## list any agent still running (an orphan keeps posting events as root)
-	@ps -eo pid,etimes,args | grep '[b]in/agent' || echo "  no agent running"
+	@ps -eo pid,etimes,comm | awk '$$3=="agent"{print "  "$$1, $$2"s"}'; \
+	ps -eo comm | grep -qx agent || echo "  no agent running"
