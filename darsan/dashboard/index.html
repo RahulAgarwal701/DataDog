@@ -1,0 +1,121 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Mini Datadog</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+:root{--bg:#0f1420;--card:#19202f;--fg:#dbe2f0;--mut:#7d8aa5;--ok:#3ecf8e;--warn:#f5a623;--err:#ef5350;--acc:#5b9dff}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px system-ui,sans-serif}
+header{display:flex;gap:4px;align-items:center;padding:10px 16px;background:#0b0f19;border-bottom:1px solid #253049}
+header b{margin-right:16px;font-size:16px}
+nav button{background:none;border:0;color:var(--mut);padding:8px 14px;cursor:pointer;font-size:14px;border-radius:6px}
+nav button.on{color:#fff;background:var(--card)}nav button:disabled{opacity:.4;cursor:default}
+main{padding:16px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px}
+.card{background:var(--card);border-radius:8px;padding:14px}.card h3{margin:0 0 8px;font-size:15px}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px}
+.kv{display:flex;justify-content:space-between;color:var(--mut);margin:3px 0}.kv span:last-child{color:var(--fg)}
+select,input,button.b{background:#0b0f19;color:var(--fg);border:1px solid #2b3956;border-radius:6px;padding:6px 10px;margin:0 6px 8px 0}
+button.b{cursor:pointer;background:var(--acc);border:0;color:#fff}button.r{background:var(--err)}
+table{width:100%;border-collapse:collapse;font-size:13px}td,th{padding:5px 8px;text-align:left;border-bottom:1px solid #253049}th{color:var(--mut)}
+.ERROR{color:var(--err)}.WARN{color:var(--warn)}.INFO{color:var(--ok)}.DEBUG{color:var(--mut)}
+.rid{color:var(--acc);cursor:pointer}.msg{color:var(--mut);padding:30px;text-align:center}.tag{font-size:11px;background:#2b3956;padding:2px 6px;border-radius:4px}
+svg text{fill:var(--mut);font-size:11px}
+</style></head><body>
+<header><b>Mini Datadog</b><nav id="nav"></nav><span id="mode" class="tag" style="margin-left:auto"></span></header>
+<main id="main"></main>
+<script>
+const Q=new URLSearchParams(location.search), MOCK=Q.get("mock")==="1";
+const BASE=Q.get("api")||"http://"+(location.hostname||"localhost")+":9000";
+const SVCS=["api-gateway","orders","payments","inventory"], METRICS=["request_rate","latency_p95_ms","error_rate","cpu_percent","memory_mb"];
+const UNIT={request_rate:"req/s",latency_p95_ms:"ms",error_rate:"ratio",cpu_percent:"%",memory_mb:"MB"};
+document.getElementById("mode").textContent=MOCK?"MOCK DATA":"LIVE";
+const $=(h)=>{const d=document.createElement("div");d.innerHTML=h;return d.firstElementChild};
+const esc=s=>String(s??"").replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+const iso=d=>d.toISOString();
+let mockFault={};  // service -> latency
+// ---------- data layer (real API or mock) ----------
+async function api(path,opts){
+  if(MOCK) return mock(path,opts);
+  const r=await fetch(BASE+path,opts); const j=await r.json().catch(()=>null);
+  if(!r.ok) throw new Error(j?.error?.message||r.status); return j;
+}
+function mock(path,opts){
+  const u=new URL(path,"http://x"), p=u.pathname, g=k=>u.searchParams.get(k), now=Date.now();
+  const f=s=>mockFault[s]||0;
+  if(p.endsWith("/health/all")) return {services:[...SVCS,"loadgen"].map(s=>({service:s,reachable:true,health:{service:s,status:"ok"}}))};
+  if(p.endsWith("/metrics/latest")) return SVCS.map(s=>({service:s,timestamp:iso(new Date()),values:{request_rate:5+Math.random(),latency_p95_ms:(s=="payments"?52:20)+f(s)+Math.random()*5,error_rate:f(s)?0.05:0,cpu_percent:8+Math.random()*4,memory_mb:90}}));
+  if(p.endsWith("/metrics/query")){const s=g("service"),m=g("metric");return {service:s,metric:m,unit:"ms",step_seconds:5,start:"",end:"",points:Array.from({length:120},(_,i)=>({ts:iso(new Date(now-(120-i)*5000)),value:(m=="latency_p95_ms"?(s=="payments"?52:20)+(i>100?f(s):0):5)+Math.random()*4}))}}
+  if(p.endsWith("/logs/search")) return {items:Array.from({length:40},(_,i)=>{const sv=SVCS[i%4],e=sv=="payments"&&f(sv)&&i%3==0;return{id:""+i,timestamp:iso(new Date(now-i*2000)),service:sv,severity:e?"ERROR":"INFO",message:e?"downstream call failed":"request completed",request_id:"req_"+(i>>2).toString(16).padStart(16,"0"),fields:{latency_ms:50}}}).filter(l=>(!g("service")||l.service==g("service"))),total:40,limit:100,offset:0};
+  if(p.endsWith("/topology")) return {nodes:[{id:"loadgen",kind:"external"},...SVCS.map(id=>({id,kind:"service"}))],edges:[["loadgen","api-gateway"],["api-gateway","orders"],["orders","payments"],["payments","inventory"]].map(([a,b])=>({source:a,target:b,connection_count:Math.floor(now/1e4%1e3),failed_count:0,status:"ACTIVE",last_seen:iso(new Date())}))};
+  if(p.endsWith("/network-events")) return {items:[["orders","payments"],["payments","inventory"]].map(([a,b],i)=>({event_id:""+i,timestamp:iso(new Date(now-i*900)),event_type:"CONNECT",src_service:a,dst_service:b,dst_port:8002,error:null})),total:2,limit:50,offset:0};
+  if(p.endsWith("/demo/fault")){const b=JSON.parse(opts.body);mockFault[b.service]=b.fault.latency_ms||0;return b.fault}
+  return {};
+}
+// ---------- helpers ----------
+function chart(points,unit){
+  const v=points.map(p=>p.value).filter(x=>x!=null); if(!v.length) return '<div class="msg">No data</div>';
+  const W=900,H=240,m=40,max=Math.max(...v)*1.1||1,min=0,n=points.length;
+  const X=i=>m+i*(W-m-10)/(n-1||1),Y=y=>H-20-(y-min)/(max-min)*(H-40);
+  let seg="",cur=[];points.forEach((p,i)=>{if(p.value==null){if(cur.length)seg+=`<polyline fill="none" stroke="#5b9dff" stroke-width="2" points="${cur.join(" ")}"/>`;cur=[]}else cur.push(X(i)+","+Y(p.value))});
+  if(cur.length)seg+=`<polyline fill="none" stroke="#5b9dff" stroke-width="2" points="${cur.join(" ")}"/>`;
+  const ticks=[0,.5,1].map(t=>`<text x="2" y="${Y(max*t)+4}">${(max*t).toFixed(1)}</text><line x1="${m}" x2="${W-10}" y1="${Y(max*t)}" y2="${Y(max*t)}" stroke="#253049"/>`).join("");
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%">${ticks}${seg}<text x="${W-60}" y="12">${unit}</text></svg>`;
+}
+const load=(el)=>el.innerHTML='<div class="msg">Loading…</div>';
+const fail=(el,e)=>el.innerHTML=`<div class="msg" style="color:var(--err)">Error: ${esc(e.message)}</div>`;
+// ---------- screens ----------
+const screens={
+ async Overview(el){
+  const [h,m]=await Promise.all([api("/api/v1/health/all"),api("/api/v1/metrics/latest").catch(()=>[])]);
+  const snap=Object.fromEntries(m.map(x=>[x.service,x.values]));
+  el.innerHTML='<div class="grid">'+h.services.map(s=>{const v=snap[s.service]||{},ok=s.reachable&&s.health?.status=="ok";const f=(x,d=1)=>x==null?"–":x.toFixed(d);
+   return `<div class="card"><h3><span class="dot" style="background:${ok?"var(--ok)":s.reachable?"var(--warn)":"var(--err)"}"></span>${s.service}</h3>
+   <div class="kv"><span>status</span><span>${s.reachable?s.health?.status:"unreachable"}</span></div>
+   <div class="kv"><span>req/s</span><span>${f(v.request_rate)}</span></div><div class="kv"><span>p95 latency</span><span>${f(v.latency_p95_ms,0)} ms</span></div>
+   <div class="kv"><span>error rate</span><span>${v.error_rate==null?"0.0 %":(v.error_rate*100).toFixed(1)+" %"}</span></div></div>`}).join("")+"</div>";
+ },
+ async Metrics(el){
+  el.innerHTML=`<select id="s">${SVCS.map(x=>`<option>${x}</option>`)}</select><select id="m">${METRICS.map(x=>`<option>${x}</option>`)}</select>
+   <select id="r"><option value="15">15 min</option><option value="60">1 h</option><option value="5">5 min</option></select><div class="card" id="c"></div>`;
+  const draw=async()=>{const c=el.querySelector("#c");load(c);try{const end=new Date(),mins=+el.querySelector("#r").value,st=new Date(end-mins*6e4),step=Math.max(5,Math.ceil(mins*60/1000));
+   const d=await api(`/api/v1/metrics/query?service=${el.querySelector("#s").value}&metric=${el.querySelector("#m").value}&start=${iso(st)}&end=${iso(end)}&step_seconds=${step}`);c.innerHTML=`<h3>${d.service} · ${d.metric}</h3>`+chart(d.points,d.unit)}catch(e){fail(c,e)}};
+  el.querySelectorAll("select").forEach(x=>x.onchange=draw);await draw();
+ },
+ async Logs(el){
+  el.innerHTML=`<select id="s"><option value="">all services</option>${SVCS.map(x=>`<option>${x}</option>`)}</select><select id="v"><option value="">all severities</option><option>ERROR</option><option>WARN</option><option>INFO</option></select>
+   <input id="q" placeholder="search message"><input id="rid" placeholder="request_id (trace)" size="22"><button class="b" id="go">Search</button><div class="card" id="t"></div>`;
+  const run=async()=>{const t=el.querySelector("#t");load(t);try{
+   const rid=el.querySelector("#rid").value.trim();const p=new URLSearchParams({limit:rid?1000:200});
+   for(const k of ["s","v","q"]){const v=el.querySelector("#"+k).value;if(v)p.append({s:"service",v:"severity",q:"q"}[k],v)}
+   let d=await api("/api/v1/logs/search?"+p);let items=d.items;if(rid)items=items.filter(l=>l.request_id==rid).reverse();
+   t.innerHTML=items.length?`<table><tr><th>time</th><th>service</th><th>sev</th><th>message</th><th>request_id</th></tr>${items.map(l=>`<tr><td>${l.timestamp.slice(11,23)}</td><td>${l.service}</td><td class="${l.severity}">${l.severity}</td><td>${esc(l.message)} <span style="color:var(--mut)">${esc(JSON.stringify(l.fields))}</span></td><td class="rid">${esc(l.request_id)}</td></tr>`).join("")}</table>`:'<div class="msg">No logs match</div>';
+   t.querySelectorAll(".rid").forEach(x=>x.onclick=()=>{el.querySelector("#rid").value=x.textContent;run()})}catch(e){fail(t,e)}};
+  el.querySelector("#go").onclick=run;await run();
+ },
+ async Network(el){
+  const [g,e]=await Promise.all([api("/api/v1/topology"),api("/api/v1/network-events?limit=30")]);
+  const order=["loadgen","api-gateway","orders","payments","inventory"],pos={};g.nodes.forEach((n,i)=>pos[n.id]={x:70+order.indexOf(n.id)*170,y:70});
+  const svg=`<svg viewBox="0 0 880 140" width="100%"><defs><marker id="a" markerWidth="8" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0,0L8,4L0,8z" fill="#7d8aa5"/></marker></defs>`+
+   g.edges.map(x=>{const a=pos[x.source],b=pos[x.target];if(!a||!b)return"";return`<line x1="${a.x+35}" y1="${a.y}" x2="${b.x-38}" y2="${b.y}" stroke="${x.failed_count?"#ef5350":"#7d8aa5"}" stroke-width="2" marker-end="url(#a)"/><text x="${(a.x+b.x)/2-15}" y="${a.y-12}">${x.connection_count}${x.failed_count?" / "+x.failed_count+" ✗":""}</text>`}).join("")+
+   g.nodes.map(n=>`<circle cx="${pos[n.id].x}" cy="70" r="34" fill="#19202f" stroke="${n.kind=="external"?"#f5a623":"#5b9dff"}" stroke-width="2"/><text x="${pos[n.id].x}" y="74" text-anchor="middle" style="fill:#dbe2f0">${n.id}</text>`).join("")+"</svg>";
+  el.innerHTML=`<div class="card"><h3>Service topology (from eBPF events)</h3>${svg}</div><br><div class="card"><h3>Live network events</h3><table><tr><th>time</th><th>type</th><th>src → dst</th><th>error</th></tr>${e.items.map(x=>`<tr><td>${x.timestamp.slice(11,23)}</td><td class="${x.event_type=="CONNECT_FAILED"?"ERROR":"INFO"}">${x.event_type}</td><td>${x.src_service||x.src_ip} → ${x.dst_service||x.dst_ip}:${x.dst_port}</td><td>${x.error||""}</td></tr>`).join("")||'<tr><td colspan=4 class="msg">No events yet</td></tr>'}</table></div>`;
+ },
+ async Controls(el){
+  el.innerHTML=`<div class="card"><h3>Fault injection</h3><select id="s">${SVCS.map(x=>`<option ${x=="payments"?"selected":""}>${x}</option>`)}</select>
+   <select id="t"><option value="latency">latency</option><option value="error">error</option></select>
+   <input id="l" type="number" value="800" style="width:90px"> ms <input id="e" type="number" step="0.1" value="0.5" style="width:70px"> error rate
+   <input id="d" type="number" value="60" style="width:70px"> sec<br><button class="b" id="inj">Inject</button><button class="b r" id="clr">Restore</button> <span id="o"></span>
+   <p style="color:var(--mut)">Connection refusal: run <code>make fault-refuse</code> (stops payments), <code>make fault-restore</code> to bring it back.</p></div><br>
+   <div class="card"><h3>Load generator</h3><button class="b" data-p="baseline">Baseline (5 rps)</button><button class="b" data-p="surge">Surge (20 rps)</button><button class="b r" data-p="stop">Stop</button></div>`;
+  const post=async(fault)=>{const o=el.querySelector("#o");try{await api("/api/v1/demo/fault",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({service:el.querySelector("#s").value,fault})});o.textContent="OK "+fault.type;o.style.color="var(--ok)"}catch(e){o.textContent=e.message;o.style.color="var(--err)"}};
+  el.querySelector("#inj").onclick=()=>post({type:el.querySelector("#t").value,latency_ms:+el.querySelector("#l").value,error_rate:+el.querySelector("#e").value,duration_seconds:+el.querySelector("#d").value||null});
+  el.querySelector("#clr").onclick=()=>post({type:"none"});
+  el.querySelectorAll("[data-p]").forEach(b=>b.onclick=async()=>{if(MOCK)return;try{await fetch(`http://${location.hostname||"localhost"}:8010/profile`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({profile:b.dataset.p})})}catch(e){alert("loadgen unreachable")}});
+ }
+};
+// ---------- shell ----------
+let cur="Overview",timer;
+const nav=document.getElementById("nav"),main=document.getElementById("main");
+[...Object.keys(screens),"Incidents"].forEach(n=>{const b=document.createElement("button");b.textContent=n=="Incidents"?"Incidents (Phase 2, planned)":n;if(n=="Incidents")b.disabled=true;b.onclick=()=>show(n);b.dataset.n=n;nav.appendChild(b)});
+async function show(n){cur=n;clearInterval(timer);nav.querySelectorAll("button").forEach(b=>b.classList.toggle("on",b.dataset.n==n));
+  const go=async()=>{try{await screens[n](main)}catch(e){fail(main,e)}};load(main);await go();
+  if(n=="Overview"||n=="Network")timer=setInterval(go,5000)}
+show("Overview");
+</script></body></html>
