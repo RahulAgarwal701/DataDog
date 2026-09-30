@@ -36,6 +36,19 @@ const lt=s=>{const d=new Date(s);if(isNaN(d))return String(s??"");
   const p=(n,w=2)=>String(n).padStart(w,"0");
   return p(d.getHours())+":"+p(d.getMinutes())+":"+p(d.getSeconds())+"."+p(d.getMilliseconds(),3)};
 const tzo=()=>{const o=-new Date().getTimezoneOffset()/60;return (o>=0?"+":"")+o};
+// Network-event provenance. The eBPF agent runs on the host, so it stamps every
+// event with the machine hostname. The simulator runs in a container, so it
+// stamps its short container id (12 hex chars). That is the only provenance the
+// event stream carries -- netmon_sim.py deliberately adds no synthetic flag --
+// so label from it and do not claim more certainty than we have.
+const srcLabel=items=>{
+  const h=[...new Set((items||[]).map(x=>x.host).filter(Boolean))];
+  if(!h.length) return '<span style="color:var(--mut)">network source: none yet</span>';
+  if(h.length>1) return `<span style="color:var(--mut)">network source: MULTIPLE (${h.join(", ")})</span>`;
+  return /^[0-9a-f]{12}$/.test(h[0])
+    ? `<span style="color:#f5a623">network source: SIMULATED (container ${esc(h[0])}) &mdash; not the kernel</span>`
+    : `<span style="color:#5b9dff">network source: eBPF agent, real kernel events (host ${esc(h[0])})</span>`;
+};
 let mockFault={};  // service -> latency
 // ---------- data layer (real API or mock) ----------
 async function api(path,opts){
@@ -86,7 +99,10 @@ const screens={
   el.querySelectorAll("select").forEach(x=>x.onchange=draw);await draw();
  },
  async Logs(el){
-  el.innerHTML=`<select id="s"><option value="">all services</option>${SVCS.map(x=>`<option>${x}</option>`)}</select><select id="v"><option value="">all severities</option><option>ERROR</option><option>WARN</option><option>INFO</option></select>
+  // Build the filter row only when it is absent. This tab now auto-refreshes
+  // every 5s like Overview and Network, and rebuilding the inputs each time
+  // would wipe whatever the operator had typed and their selected request_id.
+  if(!el.querySelector("#t")) el.innerHTML=`<select id="s"><option value="">all services</option>${SVCS.map(x=>`<option>${x}</option>`)}</select><select id="v"><option value="">all severities</option><option>ERROR</option><option>WARN</option><option>INFO</option></select>
    <input id="q" placeholder="search message"><input id="rid" placeholder="request_id (trace)" size="22"><button class="b" id="go">Search</button><div class="card" id="t"></div>`;
   const run=async()=>{const t=el.querySelector("#t");load(t);try{
    const rid=el.querySelector("#rid").value.trim();const p=new URLSearchParams({limit:rid?1000:200});
@@ -102,7 +118,7 @@ const screens={
   const svg=`<svg viewBox="0 0 880 140" width="100%"><defs><marker id="a" markerWidth="8" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0,0L8,4L0,8z" fill="#7d8aa5"/></marker></defs>`+
    g.edges.map(x=>{const a=pos[x.source],b=pos[x.target];if(!a||!b)return"";return`<line x1="${a.x+35}" y1="${a.y}" x2="${b.x-38}" y2="${b.y}" stroke="${x.failed_count?"#ef5350":"#7d8aa5"}" stroke-width="2" marker-end="url(#a)"/><text x="${(a.x+b.x)/2-15}" y="${a.y-12}">${x.connection_count}${x.failed_count?" / "+x.failed_count+" ✗":""}</text>`}).join("")+
    g.nodes.map(n=>`<circle cx="${pos[n.id].x}" cy="70" r="34" fill="#19202f" stroke="${n.kind=="external"?"#f5a623":"#5b9dff"}" stroke-width="2"/><text x="${pos[n.id].x}" y="74" text-anchor="middle" style="fill:#dbe2f0">${n.id}</text>`).join("")+"</svg>";
-  el.innerHTML=`<div class="card"><h3>Service topology (from eBPF events)</h3>${svg}</div><br><div class="card"><h3>Live network events</h3><table><tr><th>time (local ${tzo()})</th><th>type</th><th>src → dst</th><th>error</th></tr>${e.items.map(x=>`<tr><td>${lt(x.timestamp)}</td><td class="${x.event_type=="CONNECT_FAILED"?"ERROR":"INFO"}">${x.event_type}</td><td>${x.src_service||x.src_ip} → ${x.dst_service||x.dst_ip}:${x.dst_port}</td><td>${x.error||""}</td></tr>`).join("")||'<tr><td colspan=4 class="msg">No events yet</td></tr>'}</table></div>`;
+  el.innerHTML=`<div class="card"><h3>Service topology</h3><div style="margin:4px 0 10px;font-size:12px">${srcLabel(e.items)}</div>${svg}</div><br><div class="card"><h3>Live network events</h3><table><tr><th>time (local ${tzo()})</th><th>type</th><th>src → dst</th><th>error</th></tr>${e.items.map(x=>`<tr><td>${lt(x.timestamp)}</td><td class="${x.event_type=="CONNECT_FAILED"?"ERROR":"INFO"}">${x.event_type}</td><td>${x.src_service||x.src_ip} → ${x.dst_service||x.dst_ip}:${x.dst_port}</td><td>${x.error||""}</td></tr>`).join("")||'<tr><td colspan=4 class="msg">No events yet</td></tr>'}</table></div>`;
  },
  async Controls(el){
   el.innerHTML=`<div class="card"><h3>Fault injection</h3><select id="s">${SVCS.map(x=>`<option ${x=="payments"?"selected":""}>${x}</option>`)}</select>
@@ -123,6 +139,6 @@ const nav=document.getElementById("nav"),main=document.getElementById("main");
 [...Object.keys(screens),"Incidents"].forEach(n=>{const b=document.createElement("button");b.textContent=n=="Incidents"?"Incidents (Phase 2, planned)":n;if(n=="Incidents")b.disabled=true;b.onclick=()=>show(n);b.dataset.n=n;nav.appendChild(b)});
 async function show(n){cur=n;clearInterval(timer);nav.querySelectorAll("button").forEach(b=>b.classList.toggle("on",b.dataset.n==n));
   const go=async()=>{try{await screens[n](main)}catch(e){fail(main,e)}};load(main);await go();
-  if(n=="Overview"||n=="Network")timer=setInterval(go,5000)}
+  if(n=="Overview"||n=="Network"||n=="Logs")timer=setInterval(go,5000)}
 show("Overview");
 </script></body></html>
