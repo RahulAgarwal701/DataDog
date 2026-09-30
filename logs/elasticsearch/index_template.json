@@ -1,0 +1,16 @@
+{
+  "index_patterns": ["minidd-logs*"],
+  "template": {
+    "settings": {"number_of_shards": 1, "number_of_replicas": 0},
+    "mappings": {
+      "properties": {
+        "timestamp":  {"type": "date"},
+        "service":    {"type": "keyword"},
+        "severity":   {"type": "keyword"},
+        "message":    {"type": "text", "fields": {"raw": {"type": "keyword", "ignore_above": 512}}},
+        "request_id": {"type": "keyword"},
+        "fields":     {"type": "object", "enabled": false}
+      }
+    }
+  }
+}
