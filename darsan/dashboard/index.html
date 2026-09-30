@@ -29,6 +29,13 @@ document.getElementById("mode").textContent=MOCK?"MOCK DATA":"LIVE";
 const $=(h)=>{const d=document.createElement("div");d.innerHTML=h;return d.firstElementChild};
 const esc=s=>String(s??"").replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
 const iso=d=>d.toISOString();
+// Timestamps arrive as UTC ISO strings. Slicing them would show UTC, which does
+// not match the operator's own `date` on a non-UTC box. Render local time, with
+// the offset shown once in the header so there is no ambiguity.
+const lt=s=>{const d=new Date(s);if(isNaN(d))return String(s??"");
+  const p=(n,w=2)=>String(n).padStart(w,"0");
+  return p(d.getHours())+":"+p(d.getMinutes())+":"+p(d.getSeconds())+"."+p(d.getMilliseconds(),3)};
+const tzo=()=>{const o=-new Date().getTimezoneOffset()/60;return (o>=0?"+":"")+o};
 let mockFault={};  // service -> latency
 // ---------- data layer (real API or mock) ----------
 async function api(path,opts){
@@ -85,7 +92,7 @@ const screens={
    const rid=el.querySelector("#rid").value.trim();const p=new URLSearchParams({limit:rid?1000:200});
    for(const k of ["s","v","q"]){const v=el.querySelector("#"+k).value;if(v)p.append({s:"service",v:"severity",q:"q"}[k],v)}
    let d=await api("/api/v1/logs/search?"+p);let items=d.items;if(rid)items=items.filter(l=>l.request_id==rid).reverse();
-   t.innerHTML=items.length?`<table><tr><th>time</th><th>service</th><th>sev</th><th>message</th><th>request_id</th></tr>${items.map(l=>`<tr><td>${l.timestamp.slice(11,23)}</td><td>${l.service}</td><td class="${l.severity}">${l.severity}</td><td>${esc(l.message)} <span style="color:var(--mut)">${esc(JSON.stringify(l.fields))}</span></td><td class="rid">${esc(l.request_id)}</td></tr>`).join("")}</table>`:'<div class="msg">No logs match</div>';
+   t.innerHTML=items.length?`<table><tr><th>time (local ${tzo()})</th><th>service</th><th>sev</th><th>message</th><th>request_id</th></tr>${items.map(l=>`<tr><td>${lt(l.timestamp)}</td><td>${l.service}</td><td class="${l.severity}">${l.severity}</td><td>${esc(l.message)} <span style="color:var(--mut)">${esc(JSON.stringify(l.fields))}</span></td><td class="rid">${esc(l.request_id)}</td></tr>`).join("")}</table>`:'<div class="msg">No logs match</div>';
    t.querySelectorAll(".rid").forEach(x=>x.onclick=()=>{el.querySelector("#rid").value=x.textContent;run()})}catch(e){fail(t,e)}};
   el.querySelector("#go").onclick=run;await run();
  },
@@ -95,7 +102,7 @@ const screens={
   const svg=`<svg viewBox="0 0 880 140" width="100%"><defs><marker id="a" markerWidth="8" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0,0L8,4L0,8z" fill="#7d8aa5"/></marker></defs>`+
    g.edges.map(x=>{const a=pos[x.source],b=pos[x.target];if(!a||!b)return"";return`<line x1="${a.x+35}" y1="${a.y}" x2="${b.x-38}" y2="${b.y}" stroke="${x.failed_count?"#ef5350":"#7d8aa5"}" stroke-width="2" marker-end="url(#a)"/><text x="${(a.x+b.x)/2-15}" y="${a.y-12}">${x.connection_count}${x.failed_count?" / "+x.failed_count+" ✗":""}</text>`}).join("")+
    g.nodes.map(n=>`<circle cx="${pos[n.id].x}" cy="70" r="34" fill="#19202f" stroke="${n.kind=="external"?"#f5a623":"#5b9dff"}" stroke-width="2"/><text x="${pos[n.id].x}" y="74" text-anchor="middle" style="fill:#dbe2f0">${n.id}</text>`).join("")+"</svg>";
-  el.innerHTML=`<div class="card"><h3>Service topology (from eBPF events)</h3>${svg}</div><br><div class="card"><h3>Live network events</h3><table><tr><th>time</th><th>type</th><th>src → dst</th><th>error</th></tr>${e.items.map(x=>`<tr><td>${x.timestamp.slice(11,23)}</td><td class="${x.event_type=="CONNECT_FAILED"?"ERROR":"INFO"}">${x.event_type}</td><td>${x.src_service||x.src_ip} → ${x.dst_service||x.dst_ip}:${x.dst_port}</td><td>${x.error||""}</td></tr>`).join("")||'<tr><td colspan=4 class="msg">No events yet</td></tr>'}</table></div>`;
+  el.innerHTML=`<div class="card"><h3>Service topology (from eBPF events)</h3>${svg}</div><br><div class="card"><h3>Live network events</h3><table><tr><th>time (local ${tzo()})</th><th>type</th><th>src → dst</th><th>error</th></tr>${e.items.map(x=>`<tr><td>${lt(x.timestamp)}</td><td class="${x.event_type=="CONNECT_FAILED"?"ERROR":"INFO"}">${x.event_type}</td><td>${x.src_service||x.src_ip} → ${x.dst_service||x.dst_ip}:${x.dst_port}</td><td>${x.error||""}</td></tr>`).join("")||'<tr><td colspan=4 class="msg">No events yet</td></tr>'}</table></div>`;
  },
  async Controls(el){
   el.innerHTML=`<div class="card"><h3>Fault injection</h3><select id="s">${SVCS.map(x=>`<option ${x=="payments"?"selected":""}>${x}</option>`)}</select>
