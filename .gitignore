@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+*.egg-info/
+
+# Go build output (per-module .gitignore files also cover bin/)
+*.test
+
+# Captured eBPF event streams. The committed evidence sample lives in
+# linux/docs/samples/ and is added explicitly; scratch captures do not belong here.
+linux/ebpf/out/
+**/out/events.jsonl
+
+# Local state
+*.log
+.DS_Store
+.idea/
+.vscode/
