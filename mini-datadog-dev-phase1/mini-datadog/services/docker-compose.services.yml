@@ -1,4 +1,6 @@
-# Dev's stack. Darsan can copy these into deploy/docker-compose.yml.
+# Dev's stack, runnable standalone. In the integrated demo it is merged into
+# demo/docker-compose.yml (+ demo/docker-compose.override.yml), which is the only
+# thing the full stack uses.
 x-svc: &svc
   build: {context: .., dockerfile: services/Dockerfile}
   volumes: ["logs:/logs"]

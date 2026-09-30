@@ -1,5 +1,6 @@
-# Rahul slice of the stack. Darsan merges this into deploy/docker-compose.yml
-# (paths are relative to metrics/; adjust context/volumes when merged).
+# Rahul slice of the stack, runnable standalone (paths relative to metrics/).
+# In the integrated demo it is merged into demo/docker-compose.yml, which is the
+# only thing the full stack uses.
 # Standalone: docker compose -f metrics/docker-compose.metrics.yml up --build
 services:
   prometheus:

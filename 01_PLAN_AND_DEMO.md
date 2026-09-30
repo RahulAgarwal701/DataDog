@@ -59,7 +59,7 @@ Every item lists **"Done when"**, which is what you can show the supervisor. Not
 
 ### Darsan
 1. **Contracts package v1.0.0** (by D1, blocks everyone): pydantic models, generated JSON Schema and TS types, fixtures, `registry.yaml`, CI contract tests. *Done when:* all 4 others can `pip install -e contracts/python` and import models.
-2. **`deploy/docker-compose.yml` + Makefile**: `make demo` starts everything and waits for health. *Done when:* from a clean clone, all containers healthy in under 3 minutes.
+2. **Demo runner** (originally `deploy/docker-compose.yml` + Makefile): `make demo` starts everything and waits for health. *Done when:* from a clean clone, all containers healthy in under 3 minutes. **Shipped as `demo/docker-compose.yml` + `demo/docker-compose.override.yml` + the root/demo Makefiles.** The original `darsan/deploy/` and `darsan/Makefile` were deleted: they referenced Dockerfiles at paths that never existed and were superseded by the two-file Compose setup in `demo/`, which is the only thing the running stack uses.
 3. **Platform API :9000**: transparent proxy to all backends, `/services`, `/health/all`, `/demo/fault`. *Done when:* the dashboard uses only this one base URL.
 4. **Dashboard, 4 screens + controls**: Overview (health cards), Metrics (time-series), Logs (search/filter/live tail), Network/eBPF (live events + basic topology diagram), Demo Controls (inject/clear fault). A greyed "Incidents: Phase 2 (planned)" tab. *Done when:* every number on screen comes from a live API, and there is a `VITE_MOCK=true` mode so work isn't blocked.
 5. **`make smoke`**: validates every Platform API response against the models. Run it at each checkpoint. It is the integration referee.
