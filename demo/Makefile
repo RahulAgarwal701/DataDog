@@ -15,6 +15,7 @@ TIMEOUT := 300
 	fault-refuse fault-refuse-stop fault-restore fault-status load-baseline load-surge load-stop netmon-off \
 	netmon-ebpf ebpf-build ebpf-sample ebpf-agents build clean nuke check
 	netmon-off netmon-on netmon-sim-stop netmon-sim-start walkthrough
+	preflight reset
 
 help: ## show this help
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk -F':.*?## ' '{printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -49,9 +50,9 @@ logs: ## tail every service log
 verify: ## check that every backend answers on the contract endpoints
 	@ok=0; for u in 9000/platform-api 9001/metrics-api 9002/logs-api 9003/topology-api; do \
 	  p=$${u%%/*}; n=$${u##*/}; \
-	  if curl -sf $$p/health >/dev/null; then echo "  ok   $$n ($$p)"; \
+	  if curl -sf --max-time 5 localhost:$$p/health >/dev/null; then echo "  ok   $$n ($$p)"; \
 	  else echo "  FAIL $$n ($$p)"; ok=1; fi; done; \
-	es=$$(curl -s -o /dev/null -w '%{http_code}' localhost:9200/_cluster/health); \
+	es=$$(curl -s --max-time 5 -o /dev/null -w '%{http_code}' localhost:9200/_cluster/health); \
 	if [ "$$es" = "200" ]; then echo "  ok   elasticsearch (9200)"; else echo "  FAIL elasticsearch ($$es)"; ok=1; fi; \
 	exit $$ok
 
@@ -74,6 +75,41 @@ walkthrough: ## send one real request through api-gateway -> orders -> payments 
 	fi
 	@if $(MAKE) --no-print-directory fault-status >/dev/null 2>&1; then :; else \
 	  echo "  FAIL payments listener is down: make -C demo fault-restore"; exit 1; fi
+
+# ---------- the referee ----------
+preflight: ## everything to check BEFORE you start presenting
+	@echo "== containers =="
+	@n=$$($(C) ps --format '{{.Name}}' 2>/dev/null | wc -l); \
+	if [ "$$n" -lt 14 ]; then echo "  FAIL only $$n/14 containers up -- run: make -C demo demo"; exit 1; fi; \
+	echo "  ok   $$n containers up"
+	@$(MAKE) --no-print-directory verify
+	@$(MAKE) --no-print-directory walkthrough
+	@echo "== data flowing =="
+	@curl -sf localhost:9000/api/v1/metrics/latest | python3 -c "import json,sys; d=json.load(sys.stdin); \
+	rps=[m['values'].get('request_rate') or 0 for m in d]; \
+	print('  ok   request_rate', [round(x,1) for x in rps]) if any(rps) else (print('  FAIL no traffic reaching the services') or sys.exit(1))"
+	@echo "== network events =="
+	@n=$$(curl -sf 'localhost:9000/api/v1/network-events?limit=1' | python3 -c "import json,sys; print(json.load(sys.stdin)['total'])" 2>/dev/null || echo 0); \
+	if [ "$$n" -eq 0 ]; then \
+	  echo "  WARN no network events yet."; \
+	  echo "       Either the simulator has not ticked yet (wait 10s, re-run),"; \
+	  echo "       or you want the real agent: make -C demo netmon-ebpf"; \
+	else echo "  ok   $$n network events in the buffer"; fi
+	@echo "== fault state =="
+	@$(MAKE) --no-print-directory fault-status >/dev/null 2>&1 \
+	  && echo "  ok   no fault active" \
+	  || { echo "  FAIL a fault is active -- run: make -C demo fault-restore"; exit 1; }
+	@echo "== orphaned eBPF agents (these inflate edge counts) =="
+	@$(MAKE) --no-print-directory ebpf-agents
+	@echo
+	@echo "  READY. dashboard http://localhost:3000"
+
+reset: ## clear faults, wipe the topology buffer, and confirm a clean chain
+	@$(MAKE) --no-print-directory fault-restore
+	@$(C) restart topology-api >/dev/null
+	@sleep 3
+	@$(MAKE) --no-print-directory walkthrough
+	@echo "  clean. load is $(shell curl -sf localhost:8010/profile 2>/dev/null || echo unknown)"
 
 # ---------- the referee ----------
 smoke: ## validate every Platform API response against the pydantic contract models

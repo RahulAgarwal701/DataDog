@@ -1,13 +1,19 @@
 # Mini Datadog - Phase 1 demo runbook
 
+> **Driving the demo? Read `demo/DRIVE.md` instead.** That is the one-page timed script
+> with a recovery command for every step. This file is the reference behind it: what each
+> panel shows, why the network tab is built the way it is, and the full troubleshooting
+> table.
+
 One command starts everything. Start it **at least 10 minutes before you present** so the
 graphs have history.
 
 ```bash
-make demo          # build + start the stack, wait until every container is healthy
-make -C demo ps    # container status
-make -C demo logs  # tail everything
-make -C demo down  # stop (add `nuke` to also wipe the log volume)
+make demo            # build + start the stack, wait until every container is healthy
+make -C demo preflight   # 2-second go/no-go check; must end with READY
+make -C demo ps     # container status
+make -C demo logs   # tail everything
+make -C demo down   # stop (add `nuke` to also wipe the log volume)
 ```
 
 Then open **<http://localhost:3000>**.
@@ -19,8 +25,9 @@ Then open **<http://localhost:3000>**.
 | <http://localhost:9090> | Prometheus (evidence: 4 targets UP) |
 | <http://localhost:9003/api/v1/topology> | Topology API, raw JSON |
 
-`make demo` ends by printing a pass/fail line per backend. If any line says `FAIL`, run
-`make -C demo logs` and fix that before you present.
+`make demo` ends by printing a pass/fail line per backend, then sends one real request
+through the whole chain. If anything says `FAIL`, run `make -C demo logs` and fix that
+before you present.
 
 ---
 
