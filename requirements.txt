@@ -1,0 +1,24 @@
+# Consolidated Python dependencies for the whole repo.
+#
+# Per-component sources of truth (component files stay authoritative):
+#   darsan/contracts/python/pyproject.toml
+#   darsan/platform_api/requirements.txt
+#   logs/requirements.txt
+#   mini-datadog-dev-phase1/mini-datadog/services/requirements.txt
+#   rahul-metrics-phase1/metrics/metrics_api/requirements.txt
+#
+# Also required, but not installable from PyPI:
+#   pip install -e darsan/contracts/python     # provides minidd_contracts
+#
+# Versions are the strictest intersection of every component above, so one
+# install satisfies all of them. Loosening a pin here means re-checking all five.
+
+fastapi==0.115.*
+uvicorn==0.32.*
+httpx==0.27.*
+pydantic>=2.6
+prometheus-client==0.21.*
+pyyaml>=6
+
+# test suites only
+pytest>=8
